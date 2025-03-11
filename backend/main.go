@@ -6,13 +6,14 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 )
 
 const (
 	robotAddress = "100.105.5.12:8000" // Default robot address
 	mockMode     = false               // Set to true for testing without a robot
+	connTimeout  = 3 * time.Second     // Connection timeout
+	readTimeout  = 5 * time.Second     // Read timeout
 )
 
 func main() {
@@ -20,6 +21,7 @@ func main() {
 	http.HandleFunc("/", handleRequest)
 	
 	fmt.Println("Starting server on :3000")
+	log.Printf("Robot address: %s, Mock mode: %v", robotAddress, mockMode)
 	log.Fatal(http.ListenAndServe(":3000", nil))
 }
 
@@ -38,24 +40,30 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Handle GET request (ping)
 	if r.Method == "GET" {
 		if mockMode {
-			fmt.Fprintf(w, "Robot is available (MOCK MODE)")
+			fmt.Fprintf(w, "[0064FF1122]") // Return mock data in expected format
 			return
 		}
 		
 		// Try to connect to the robot to verify it's available
-		conn, err := net.DialTimeout("tcp", robotAddress, 3*time.Second)
+		conn, err := net.DialTimeout("tcp", robotAddress, connTimeout)
 		if err != nil {
 			log.Printf("Robot ping failed: %v", err)
 			http.Error(w, fmt.Sprintf("Could not connect to robot: %v", err), http.StatusServiceUnavailable)
 			return
 		}
-		conn.Close()
+		defer conn.Close()
 		fmt.Fprintf(w, "Robot is available")
 		return
 	}
 	
 	// Handle POST request (send frame)
 	if r.Method == "POST" {
+		// For mock mode, return simulated data
+		if mockMode {
+			fmt.Fprintf(w, "[0064FF1122]") // Return mock data in expected format
+			return
+		}
+		
 		// Read the frame from the request body
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -64,24 +72,11 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		defer r.Body.Close()
 		
-		 // Format the message to ensure it has proper brackets
+		// Format the message to ensure it has proper brackets
 		message := string(body)
-		if !strings.HasPrefix(message, "[") {
-			message = "[" + message
-		}
-		if !strings.HasSuffix(message, "]") {
-			message = message + "]"
-		}
-		
-		if mockMode {
-			// In mock mode, simulate robot response
-			log.Printf("MOCK: Received frame: %s", message)
-			fmt.Fprintf(w, "Robot response: [01c01200300230005001840203]")
-			return
-		}
 		
 		// Connect to the robot with timeout
-		conn, err := net.DialTimeout("tcp", robotAddress, 3*time.Second)
+		conn, err := net.DialTimeout("tcp", robotAddress, connTimeout)
 		if err != nil {
 			log.Printf("Failed to connect to robot: %v", err)
 			http.Error(w, fmt.Sprintf("Could not connect to robot: %v", err), http.StatusServiceUnavailable)
@@ -90,7 +85,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		defer conn.Close()
 		
 		// Set read/write timeouts
-		conn.SetDeadline(time.Now().Add(5 * time.Second))
+		conn.SetDeadline(time.Now().Add(readTimeout))
 		
 		log.Printf("Sending frame to robot: %s", message)
 		
